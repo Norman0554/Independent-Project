@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Exam Proctoring Dashboard</title>
+  <style>
+    :root {
+      --bg: #f3f5f9;
+      --card: #ffffff;
+      --text: #1d2433;
+      --muted: #5c667d;
+      --ok: #1f9d57;
+      --warn: #d9822b;
+      --danger: #d64545;
+      --line: #dde3ee;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(160deg, #eef3ff 0%, #f8fafc 45%, #fffdf8 100%);
+      color: var(--text);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .title {
+      font-size: 28px;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .time {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+    }
+
+    .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .value {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    .status-normal { color: var(--ok); }
+    .status-suspicious { color: var(--warn); }
+    .status-risk { color: var(--danger); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      min-height: 300px;
+    }
+
+    .panel h3 {
+      margin: 0 0 10px 0;
+      font-size: 16px;
+    }
+
+    .list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 420px;
+      overflow: auto;
+    }
+
+    .list li {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      line-height: 1.35;
+      background: #fbfcff;
+      word-break: break-word;
+    }
+
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="title">Exam Proctoring Dashboard</h1>
+      <div id="clock" class="time">--:--:--</div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="label">Current Activity</div>
+        <div id="current_activity" class="value">Normal</div>
+      </div>
+      <div class="card">
+        <div class="label">Cheating Probability</div>
+        <div id="cheating_probability" class="value">0%</div>
+      </div>
+      <div class="card">
+        <div class="label">Total Alerts</div>
+        <div id="total_alerts" class="value">0</div>
+      </div>
+      <div class="card">
+        <div class="label">Total Violations</div>
+        <div id="total_violations" class="value">0</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <section class="panel">
+        <h3>Recent Alerts</h3>
+        <ul id="alerts_list" class="list"></ul>
+      </section>
+      <section class="panel">
+        <h3>Recent Violations</h3>
+        <ul id="violations_list" class="list"></ul>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    function setActivityStyle(el, value) {
+      el.classList.remove("status-normal", "status-suspicious", "status-risk");
+      const val = (value || "").toLowerCase();
+      if (val.includes("high")) el.classList.add("status-risk");
+      else if (val.includes("suspicious")) el.classList.add("status-suspicious");
+      else el.classList.add("status-normal");
+    }
+
+    function renderList(targetId, items, emptyText) {
+      const list = document.getElementById(targetId);
+      list.innerHTML = "";
+      if (!items || !items.length) {
+        const li = document.createElement("li");
+        li.className = "muted";
+        li.textContent = emptyText;
+        list.appendChild(li);
+        return;
+      }
+
+      items.forEach(item => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        list.appendChild(li);
+      });
+    }
+
+    async function refreshStats() {
+      const res = await fetch("/api/stats");
+      const data = await res.json();
+
+      const activity = document.getElementById("current_activity");
+      activity.textContent = data.current_activity || "Normal";
+      setActivityStyle(activity, data.current_activity);
+
+      document.getElementById("cheating_probability").textContent = `${data.cheating_probability || 0}%`;
+      document.getElementById("total_alerts").textContent = data.total_alerts || 0;
+      document.getElementById("total_violations").textContent = data.total_violations || 0;
+      document.getElementById("clock").textContent = data.current_time || "--:--:--";
+    }
+
+    async function refreshAlerts() {
+      const res = await fetch("/api/alerts");
+      const data = await res.json();
+      renderList("alerts_list", data, "No alerts yet");
+    }
+
+    async function refreshViolations() {
+      const res = await fetch("/api/violations");
+      const data = await res.json();
+      const lines = data.map(v => `${v.timestamp || "n/a"} | ${v.type || "UNKNOWN"}`);
+      renderList("violations_list", lines, "No violations yet");
+    }
+
+    async function refreshAll() {
+      try {
+        await Promise.all([refreshStats(), refreshAlerts(), refreshViolations()]);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    refreshAll();
+    setInterval(refreshAll, 2000);
+  </script>
+</body>
+</html>
