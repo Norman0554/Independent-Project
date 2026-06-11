@@ -1,161 +1,90 @@
-# AI-Powered Online Exam Cheating Detection System
+# AI-Powered Online Exam Proctoring System
 
-# Independent-Project
+An intelligent, real-time exam monitoring system designed to ensure integrity during online tests. This application leverages computer vision, audio processing, and deep learning techniques to detect and log suspicious behaviors.
 
-<!-- ![System Demo](demo.gif) Add a demo gif later -->
+---
 
-A computer vision system that detects suspicious activities during online exams using webcam footage.
+## Overview
+
+This system monitors the examinee's environment, detects potential violations, provides real-time feedback, and generates comprehensive reports. 
+
+The application runs a local computer-vision and audio capture loop, logging events to a structured file system and streaming live status updates to a web dashboard.
+
+---
 
 ## Features
 
-- **Face Presence Detection**: Identifies when student's face is not visible
-- **Eye Movement Tracking**: Detects excessive eye movements (left/right/up/down)
-- **Gaze Analysis**: Monitors direction of eye gaze
-- **Mouth Movement Detection**: Identifies potential talking or whispering
-- **Multi-Face Detection**: Alerts when multiple faces appear in frame
-- **Real-time Alerts**: Flags suspicious activities with timestamps
-- **Dashboard**: Visual interface showing detection metrics and alerts
-- **Object Delection**: Object Detection: Detects prohibited objects (cell phone, book, etc.).
-- **Screen Recoding**: Continuously captures examinee's screen activity
-- **Audio Detection**: Monitors for voice/whispering in student's environment
-- **Alert Speaker**: Delivers real-time verbal warnings via text-to-speech
-- **Report Generation**: Creates detailed visual PDF and HTML reports with violations summary, heatmaps, and activity timeline  
+- **Face Presence Monitoring**: Detects when the face disappears from the camera frame.
+- **Multi-Face Detection**: Flags an alert if more than one face is detected in the frame.
+- **Eye & Gaze Tracking**: Monitors the Eye Aspect Ratio (EAR) for blink rate analysis and tracks gaze direction (Left, Right, Center) to detect if the user is looking away from the screen.
+- **Mouth Movement Detection**: Analyzes lip and mouth landmarks to identify potential whispering or talking.
+- **Object Detection**: Integrates a deep learning model to detect prohibited items (e.g., cell phones, textbooks, notebooks) in the camera feed.
+- **Audio Monitoring**: Captures microphone input to detect voice activity. Supports speech-to-text processing for keyword flagging.
+- **Dual Stream Recording**: Captures and saves video recordings of both the webcam and screen activity.
+- **Real-Time Voice Alerts**: Provides audio warnings immediately upon detecting violations.
+- **Web Dashboard**: Features a Flask-based administrative dashboard showing live metrics, alert logs, and a risk level indicator.
+- **Automated Report Generation**: Generates detailed HTML/PDF reports at the end of the session, featuring violation timelines, heatmaps, and stats.
 
+---
+
+## System Architecture
+
+```text
+exam_cheating_detection/
+├── config/              # Configuration files (YAML parameters)
+├── models/              # Pretrained deep learning models (YOLOv8, Face Landmarker)
+├── src/                 # Source code
+│   ├── detection/       # Real-time detection modules (Face, Eyes, Mouth, Objects, Audio)
+│   ├── reporting/       # HTML/PDF report generator
+│   ├── utils/           # Helper scripts (Recorders, Alert system, Loggers)
+│   ├── dashboard/       # Web-based analytics interface
+│   └── main.py          # Main application loop
+├── logs/                # Session log files (alerts.log)
+├── recordings/          # Recorded webcam and screen videos
+├── reports/             # Structured JSON data and generated HTML/PDF reports
+└── tests/               # Test suites
+```
+
+---
 
 ## Technologies Used
 
-- Python 3.8+
-- OpenCV (for computer vision)
-- MediaPipe (for face mesh and landmark detection)
-- FaceNet-PyTorch (for face detection)
-- MTCNN (for face detection)
-- Flask (for dashboard)
+- **Programming Language**: Python 3.8+ (Tested on Python 3.11)
+- **Computer Vision**: OpenCV, MediaPipe (FaceMesh), FaceNet-PyTorch (MTCNN)
+- **Deep Learning**: Ultralytics YOLOv8 (Object Detection)
+- **Audio Processing**: PyAudio, OpenAI Whisper (Speech-to-Text)
+- **Speech Synthesis**: gTTS (Google Text-to-Speech), Pygame Mixer
+- **Data Visualization**: Matplotlib
+- **Web Interface**: Flask, Jinja2
+- **Document Generation**: pdfkit (wkhtmltopdf wrapper)
+- **Database**: File-based storage (Structured JSON databases and plain log files)
 
-## Installation
+---
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/exam-cheating-detection.git
-cd exam-cheating-detection
-```
+## Installation & Launch
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+For complete installation instructions, system dependencies (such as `portaudio` and `wkhtmltopdf`), and execution commands, please refer to:
+- **[README_RUN.md](file:///Users/mr.norman/Downloads/exam-cheating-detection-main/README_RUN.md)**
 
-3. Download pre-trained models (if needed):
-```bash
-python -c "from facenet_pytorch import MTCNN; MTCNN(keep_all=True)"
-```
+### Quick Start:
 
-## Usage
+1. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. **Run the proctoring client**:
+   ```bash
+   python src/main.py
+   ```
+3. **Run the dashboard** (in a separate terminal):
+   ```bash
+   python src/dashboard/app.py
+   ```
+4. **View live analytics**:
+   Open `http://localhost:5000` in your web browser.
 
-1. Configure the system by editing `config/config.yaml`:
-```yaml
-video:
-  source: 0                   # 0 for default webcam
-  resolution: [1280, 720]
-  fps: 30
-  recording_path: "./recordings"
+---
 
-screen:
-  monitor_index: 0           # 0 for primary monitor
-  fps: 15                    # Lower FPS for screen recording
-  recording: true            # Enable/disable screen recording
+## Configuration
 
-
-detection:
-  face:
-    detection_interval: 5     # frames
-    min_confidence: 0.8
-  eyes:
-    gaze_threshold: 2          # seconds
-    blink_threshold: 0.3       # EAR threshold for blink detection
-    gaze_sensitivity: 15       # pixels threshold for gaze detection
-    consecutive_frames: 3      # frames for gaze change detection
-  mouth:
-    movement_threshold: 3     # consecutive frames
-  multi_face:
-    alert_threshold: 5        # frames
-  objects:
-    min_confidence: 0.65  # Detection confidence threshold
-    detection_interval: 5 # frames between detections
-    max_fps: 5            # Maximum detection frames per second
-  audio_monitoring:
-    enabled: true
-    sample_rate: 16000
-    energy_threshold: 0.001
-    zcr_threshold: 0.35
-    whisper_enabled: false  # Enable only when needed
-    whisper_model: "tiny.en"
-        
-logging:
-  log_path: "./logs"
-  alert_cooldown: 10          # seconds
-  alert_system:
-    voice_alerts: true  # Enable/disable voice alerts
-    alert_volume: 0.8   # Volume level (0.0 to 1.0)
-    cooldown: 10        # Minimum seconds between same alert
-```
-
-2.Run the main detection system:
-```bash
-python src/main.py
-```
-
-3. (Optional) Run the dashboard in another terminal:
-```bash
-python src/dashboard/app.py
-```
-4. Access the dashboard at `http://localhost:5000`
-
-## System Architecture
-```
-exam_cheating_detection/
-├── config/              # Configuration files
-├── models/              # Pretrained models
-├── src/                 # Source code
-│   ├── detection/       # Detection modules
-│   ├── reporting/       # Reporting application
-│   ├── utils/           # Utility functions
-│   ├── dashboard/       # Web dashboard
-│   └── main.py          # Main application
-├── logs/                # Session logs
-└── recordings/          # Recorded video sessions
-```
-
-## Customization
-You can adjust detection thresholds in `config/config.yaml`:
-```yaml
-eyes:
-  gaze_threshold: 2      # seconds of gaze deviation to trigger alert
-  blink_threshold: 0.3   # eye aspect ratio for blink detection
-
-mouth:
-  movement_threshold: 3  # consecutive frames of mouth movement
-```
-
-## Troubleshooting
-Problem: Eye detection working, but not perfect
-
-Solution:
-
-    - Ensure good lighting on face
-    - Remove glasses if they cause glare
-    - Adjust camera position to be face-level
-
-Problem: Book detection working, but not perfect
-
-Solution:
-    -
-
-## Contributing
-Contributions are welcome! Please open an issue or pull request for any improvements.
-
-## License
-MIT License - See [LICENSE](LICENSE) for details.
-
-## ☕ Support the Project
-If you find this project helpful, consider buying me a coffee!
-[Buy Me a Coffee](https://buymeacoffee.com/aarambhdevhub)
+All parameters, detection sensitivity thresholds, recording FPS, and logging paths can be configured in [config/config.yaml](file:///Users/mr.norman/Downloads/exam-cheating-detection-main/config/config.yaml).

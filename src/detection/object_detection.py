@@ -1,185 +1,148 @@
-# import cv2
-# import torch
-# from ultralytics import YOLO
-# from datetime import datetime
-
-# class ObjectDetector:
-#     def __init__(self, config):
-#         self.config = config['detection']['objects']
-#         self.model = None
-#         self.class_map = {
-#             73: 'book',
-#             67: 'cell phone'
-#         }
-#         self.alert_logger = None
-#         self.detection_interval = self.config['detection_interval']
-#         self.frame_count = 0
-#         self._initialize_model()
-
-#     def _initialize_model(self):
-#         """Safely initialize the YOLO model"""
-#         try:
-#             self.model = YOLO('models/yolov8n.pt')
-#             # Warm up the model
-#             dummy_input = torch.zeros((1, 3, 640, 640))
-#             self.model(dummy_input)
-#         except Exception as e:
-#             raise RuntimeError(f"Failed to initialize object detector: {str(e)}")
-
-#     def set_alert_logger(self, alert_logger):
-#         self.alert_logger = alert_logger
-
-#     def detect_objects(self, frame, visualize=False):
-#         """Detect forbidden objects in frame"""
-#         self.frame_count += 1
-#         if self.frame_count % self.detection_interval != 0:
-#             return False
-            
-#         try:
-#             results = self.model(frame)
-#             detected = False
-            
-#             for result in results:
-#                 for box in result.boxes:
-#                     cls = int(box.cls)
-#                     conf = float(box.conf)
-                    
-#                     if cls in self.class_map and conf > self.config['min_confidence']:
-#                         detected = True
-#                         label = self.class_map[cls]
-                        
-#                         if self.alert_logger:
-#                             self.alert_logger.log_alert(
-#                                 "FORBIDDEN_OBJECT",
-#                                 f"Detected {label} with confidence {conf:.2f}"
-#                             )
-                        
-#                         if visualize:
-#                             x1, y1, x2, y2 = map(int, box.xyxy[0])
-#                             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-#                             cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1-10),
-#                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            
-#             return detected
-            
-#         except Exception as e:
-#             if self.alert_logger:
-#                 self.alert_logger.log_alert(
-#                     "OBJECT_DETECTION_ERROR",
-#                     f"Object detection failed: {str(e)}"
-#                 )
-#             return False
-
-
-import cv2
-import torch
-import numpy as np
-from ultralytics import YOLO
 from datetime import datetime
 
+import cv2
+import numpy as np
+import torch
+from ultralytics import YOLO
+
+
 class ObjectDetector:
+    PHONE_LABELS = {"cell phone", "mobile phone", "phone", "smartphone", "cellphone"}
+    BOOK_LABELS = {"book", "textbook", "notebook"}
+
     def __init__(self, config):
-        self.config = config['detection']['objects']
+        self.config = config["detection"]["objects"]
         self.model = None
-        self.forbidden_labels = {"cell phone", "mobile phone", "phone", "book"}
         self.alert_logger = None
-        self.detection_interval = self.config['detection_interval']
-        self.frame_count = 0
+        self.min_confidence = float(self.config.get("min_confidence", 0.45))
+        self.phone_min_confidence = float(self.config.get("phone_min_confidence", 0.35))
+        self.book_min_confidence = float(self.config.get("book_min_confidence", self.min_confidence))
+        self.max_fps = max(float(self.config.get("max_fps", 5)), 0.1)
+        self.last_detection_time = datetime.min
         self._initialize_model()
-        self.last_detection_time = datetime.now()
-        self.phone_min_confidence = self.config.get('phone_min_confidence', 0.35)
-        self.book_min_confidence = self.config.get('book_min_confidence', self.config['min_confidence'])
 
     def _initialize_model(self):
-        """Initialize optimized YOLO model"""
+        """Initialize YOLO and run one warm-up inference."""
         try:
-            # Use the smallest YOLOv8 model for speed
-            self.model = YOLO('models/yolov8n.pt')
-            
-            # Optimize model settings
-            self.model.overrides['conf'] = self.config['min_confidence']
-            self.model.overrides['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
-            self.model.overrides['imgsz'] = self.config.get('imgsz', 640)
-            # self.model.overrides['half'] = True  # Use FP16 precision if GPU available
-            self.model.overrides['iou'] = 0.45   # Slightly higher IOU threshold
+            self.model = YOLO("models/yolov8n.pt")
+            imgsz = int(self.config.get("imgsz", 640))
 
-            
-            # Warm up the model
-            self.model(np.zeros((640, 640, 3), dtype=np.uint8), verbose=False)
-            
+            self.model.overrides["conf"] = self.min_confidence
+            self.model.overrides["device"] = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model.overrides["imgsz"] = imgsz
+            self.model.overrides["iou"] = 0.45
+
+            self.model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8), verbose=False)
         except Exception as e:
             raise RuntimeError(f"Failed to initialize object detector: {str(e)}")
 
     def set_alert_logger(self, alert_logger):
         self.alert_logger = alert_logger
 
+    def _log_alert(self, alert_type, message):
+        if self.alert_logger:
+            self.alert_logger.log_alert(alert_type, message)
+
+    def _should_skip_frame(self, current_time):
+        elapsed = (current_time - self.last_detection_time).total_seconds()
+        return elapsed < (1.0 / self.max_fps)
+
+    def _resize_for_inference(self, frame):
+        if frame is None or not hasattr(frame, "shape") or len(frame.shape) < 2:
+            raise ValueError("Invalid frame supplied to object detector")
+
+        orig_h, orig_w = frame.shape[:2]
+        if orig_h <= 0 or orig_w <= 0:
+            raise ValueError("Invalid frame size supplied to object detector")
+
+        new_w = int(self.config.get("inference_width", 640))
+        if new_w <= 0:
+            new_w = 640
+        new_h = max(1, int(orig_h * (new_w / orig_w)))
+
+        return cv2.resize(frame, (new_w, new_h)), (orig_w, orig_h, new_w, new_h)
+
+    def _class_name(self, result, cls):
+        names = getattr(result, "names", None) or getattr(self.model, "names", {})
+
+        if isinstance(names, dict):
+            return str(names.get(cls, cls)).strip().lower()
+
+        if isinstance(names, (list, tuple)) and 0 <= cls < len(names):
+            return str(names[cls]).strip().lower()
+
+        return str(cls)
+
+    def _forbidden_label(self, class_name):
+        normalized = " ".join(class_name.replace("_", " ").replace("-", " ").split())
+
+        if normalized in self.PHONE_LABELS:
+            return "cell phone"
+
+        if normalized in self.BOOK_LABELS:
+            return "book"
+
+        return None
+
+    def _confidence_threshold(self, label):
+        if label == "cell phone":
+            return self.phone_min_confidence
+        if label == "book":
+            return self.book_min_confidence
+        return self.min_confidence
+
+    def _draw_detection(self, frame, box, label, confidence, scale):
+        orig_w, orig_h, new_w, new_h = scale
+        x1, y1, x2, y2 = np.asarray(box.xyxy[0], dtype=float)
+
+        x1 = max(0, min(orig_w - 1, int(x1 * (orig_w / new_w))))
+        y1 = max(0, min(orig_h - 1, int(y1 * (orig_h / new_h))))
+        x2 = max(0, min(orig_w - 1, int(x2 * (orig_w / new_w))))
+        y2 = max(0, min(orig_h - 1, int(y2 * (orig_h / new_h))))
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        cv2.putText(
+            frame,
+            f"{label} {confidence:.2f}",
+            (x1, max(20, y1 - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 255),
+            1,
+        )
+
     def detect_objects(self, frame, visualize=False):
-        """Optimized object detection with frame skipping"""
+        """Return True when a prohibited object is detected in the frame."""
         current_time = datetime.now()
-        time_since_last = (current_time - self.last_detection_time).total_seconds()
-        
-        # Skip detection if not enough time has passed
-        if time_since_last < (1.0 / self.config['max_fps']):
+        if self._should_skip_frame(current_time):
             return False
-            
+
         try:
-            # Resize frame for processing while keeping detail for small objects (phones).
-            orig_h, orig_w = frame.shape[:2]
-            new_w = self.config.get('inference_width', 640)
-            new_h = int(orig_h * (new_w / orig_w))
-            resized_frame = cv2.resize(frame, (new_w, new_h))
-            
-            # Run inference
-            results = self.model(resized_frame, verbose=False)  # Disable logging
-            
+            resized_frame, scale = self._resize_for_inference(frame)
+            results = self.model(resized_frame, verbose=False)
+
             detected = False
             for result in results:
-                for box in result.boxes:
+                for box in getattr(result, "boxes", []):
                     cls = int(box.cls)
-                    conf = float(box.conf)
-                    names = result.names if hasattr(result, 'names') else self.model.names
-                    class_name = str(names.get(cls, cls)).lower() if isinstance(names, dict) else str(cls)
+                    confidence = float(box.conf)
+                    label = self._forbidden_label(self._class_name(result, cls))
 
-                    is_phone = any(token in class_name for token in ["cell phone", "mobile phone", "phone"])
-                    is_book = "book" in class_name
+                    if not label or confidence < self._confidence_threshold(label):
+                        continue
 
-                    label = None
-                    min_conf = self.config['min_confidence']
-                    if is_phone:
-                        label = "cell phone"
-                        min_conf = self.phone_min_confidence
-                    elif is_book:
-                        label = "book"
-                        min_conf = self.book_min_confidence
+                    detected = True
+                    self._log_alert(
+                        "FORBIDDEN_OBJECT",
+                        f"Detected {label} with confidence {confidence:.2f}",
+                    )
 
-                    if label and conf > min_conf:
-                        detected = True
-                        
-                        if self.alert_logger:
-                            self.alert_logger.log_alert(
-                                "FORBIDDEN_OBJECT",
-                                f"Detected {label} with confidence {conf:.2f}"
-                            )
-                        
-                        if visualize:
-                            # Scale coordinates back to original frame size
-                            x1, y1, x2, y2 = box.xyxy[0]
-                            x1 = int(x1 * (orig_w / new_w))
-                            y1 = int(y1 * (orig_h / new_h))
-                            x2 = int(x2 * (orig_w / new_w))
-                            y2 = int(y2 * (orig_h / new_h))
-                            
-                            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                            cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1-10),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            
+                    if visualize:
+                        self._draw_detection(frame, box, label, confidence, scale)
+
             self.last_detection_time = current_time
             return detected
-            
         except Exception as e:
-            if self.alert_logger:
-                self.alert_logger.log_alert(
-                    "OBJECT_DETECTION_ERROR",
-                    f"Object detection failed: {str(e)}"
-                )
+            self.last_detection_time = current_time
+            self._log_alert("OBJECT_DETECTION_ERROR", f"Object detection failed: {str(e)}")
             return False

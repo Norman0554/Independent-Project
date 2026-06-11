@@ -1,20 +1,11 @@
 import cv2
-import mediapipe as mp
 import numpy as np
 from datetime import datetime
+from detection.face_landmarks import FaceLandmarkDetector, get_landmark
 
 class EyeTracker:
     def __init__(self, config):
-        try:
-            self.mp_face_mesh = mp.solutions.face_mesh
-        except AttributeError:
-            from mediapipe.python.solutions import face_mesh
-            self.mp_face_mesh = face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5)
+        self.face_landmarks = FaceLandmarkDetector(max_num_faces=1)
         
         self.config = config
         self.eye_threshold = config['detection']['eyes']['gaze_threshold']
@@ -51,23 +42,21 @@ class EyeTracker:
 
     def track_eyes(self, frame):
         try:
-            # Convert frame to RGB and process
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.face_mesh.process(rgb_frame)
+            faces = self.face_landmarks.process(frame)
             
-            if not results.multi_face_landmarks:
+            if not faces:
                 return self.gaze_direction, self.eye_ratio  # Return last known values
             
-            face_landmarks = results.multi_face_landmarks[0]
+            face_landmarks = faces[0]
             frame_h, frame_w = frame.shape[:2]
             
             # Get eye landmarks in pixel coordinates
-            left_eye_coords = np.array([(face_landmarks.landmark[i].x * frame_w, 
-                                       face_landmarks.landmark[i].y * frame_h) 
+            left_eye_coords = np.array([(get_landmark(face_landmarks, i).x * frame_w, 
+                                       get_landmark(face_landmarks, i).y * frame_h) 
                                       for i in self.LEFT_EYE_INDICES])
             
-            right_eye_coords = np.array([(face_landmarks.landmark[i].x * frame_w, 
-                                        face_landmarks.landmark[i].y * frame_h) 
+            right_eye_coords = np.array([(get_landmark(face_landmarks, i).x * frame_w, 
+                                        get_landmark(face_landmarks, i).y * frame_h) 
                                        for i in self.RIGHT_EYE_INDICES])
             
             # Calculate Eye Aspect Ratio (EAR) for both eyes
@@ -80,8 +69,8 @@ class EyeTracker:
             right_eye_center = np.mean(right_eye_coords, axis=0)
             
             # Calculate horizontal difference between eye centers and nose
-            nose_tip = np.array([face_landmarks.landmark[4].x * frame_w,
-                                face_landmarks.landmark[4].y * frame_h])
+            nose = get_landmark(face_landmarks, 4)
+            nose_tip = np.array([nose.x * frame_w, nose.y * frame_h])
             
             left_diff = left_eye_center[0] - nose_tip[0]
             right_diff = right_eye_center[0] - nose_tip[0]

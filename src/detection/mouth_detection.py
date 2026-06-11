@@ -1,19 +1,8 @@
-import cv2
-import mediapipe as mp
-import numpy as np
+from detection.face_landmarks import FaceLandmarkDetector, get_landmark
 
 class MouthMonitor:
     def __init__(self, config):
-        try:
-            self.mp_face_mesh = mp.solutions.face_mesh
-        except AttributeError:
-            from mediapipe.python.solutions import face_mesh
-            self.mp_face_mesh = face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5)
+        self.face_landmarks = FaceLandmarkDetector(max_num_faces=1)
             
         self.mouth_threshold = config['detection']['mouth']['movement_threshold']
         self.mouth_movement_count = 0
@@ -24,12 +13,12 @@ class MouthMonitor:
         self.alert_logger = alert_logger
         
     def monitor_mouth(self, frame):
-        results = self.face_mesh.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        faces = self.face_landmarks.process(frame)
         
-        if not results.multi_face_landmarks:
+        if not faces:
             return False
             
-        face_landmarks = results.multi_face_landmarks[0]
+        face_landmarks = faces[0]
         
         # Get mouth landmarks (using more points for better accuracy)
         mouth_points = [
@@ -42,13 +31,13 @@ class MouthMonitor:
         ]
         
         # Calculate mouth openness
-        upper_lip = face_landmarks.landmark[13].y
-        lower_lip = face_landmarks.landmark[14].y
+        upper_lip = get_landmark(face_landmarks, 13).y
+        lower_lip = get_landmark(face_landmarks, 14).y
         mouth_open = lower_lip - upper_lip
         
         # Calculate mouth width
-        right_corner = face_landmarks.landmark[78].x
-        left_corner = face_landmarks.landmark[306].x
+        right_corner = get_landmark(face_landmarks, 78).x
+        left_corner = get_landmark(face_landmarks, 306).x
         mouth_width = abs(right_corner - left_corner)
         
         if mouth_open > 0.03 or mouth_width > 0.2:  # Thresholds for mouth movement
